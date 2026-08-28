@@ -18,15 +18,22 @@ def _roi(w, h):
     return (int(w * 0.17), int(h * 0.22), int(w * 0.84), int(h * 0.80))
 
 
-def erase_mask(px, kind, roi=None, erode_r=2):
+def erase_mask(px, kind, roi=None, erode_r=2, circle=None):
     h, w = len(px), len(px[0])
     x0, y0, x1, y1 = roi or _roi(w, h)
+    if circle:
+        cx, cy, cr = circle
+        x0, y0 = max(0, int(cx - cr)), max(0, int(cy - cr))
+        x1, y1 = min(w, int(cx + cr) + 1), min(h, int(cy + cr) + 1)
     base = draw.alpha_mask(px, 200)
     inner = draw.erode(base, erode_r)
     mask = [[False] * w for _ in range(h)]
     for y in range(y0, y1):
         for x in range(x0, x1):
             if not inner[y][x]:
+                continue
+            if circle and (x - circle[0]) ** 2 + (y - circle[1]) ** 2 > \
+                    circle[2] ** 2:
                 continue
             r, g, b, a = px[y][x]
             L = lum((r, g, b))
@@ -36,6 +43,11 @@ def erase_mask(px, kind, roi=None, erode_r=2):
                 hit = L > 150
             elif kind == "darker":
                 hit = L < 84
+            elif kind == "engraved_silver":
+                # engraved lettering: dark strokes plus light bevel edges
+                hit = L < 84 or L > 148
+            elif kind == "engraved_tan":
+                hit = L < 112 or L > 178
             elif kind == "orange":
                 hit = (r > 140 and 50 < g < 215 and b < 115
                        and r - b > 60)
@@ -169,14 +181,52 @@ def swap_ink(orig, text, interior, color=None, box=None):
     return len(px[0]), len(px), px
 
 
+def inpaint_hv(px, mask):
+    """Diffusion-lite: nearest clean pixel in all 4 directions, weighted
+    by inverse distance. Keeps both the vertical gradient and the
+    horizontal curvature of curved surfaces."""
+    h, w = len(px), len(px[0])
+    src = [row[:] for row in px]
+
+    def ray(x, y, dx, dy):
+        d = 1
+        while True:
+            xx, yy = x + dx * d, y + dy * d
+            if not (0 <= xx < w and 0 <= yy < h):
+                return None
+            if not mask[yy][xx]:
+                p = src[yy][xx]
+                if p[3] > 40:
+                    return (p, d)
+                return None
+            d += 1
+
+    for y in range(h):
+        for x in range(w):
+            if not mask[y][x]:
+                continue
+            hits = [r for r in (ray(x, y, -1, 0), ray(x, y, 1, 0),
+                                ray(x, y, 0, -1), ray(x, y, 0, 1)) if r]
+            if not hits:
+                continue
+            tw = sum(1.0 / d for _, d in hits)
+            px[y][x] = tuple(
+                round(sum(p[k] / d for p, d in hits) / tw)
+                for k in range(4))
+    return px
+
+
 def relabel(orig, text, kind, box=None, color=None, grow=1.0, roi=None,
-            erode_r=2):
+            erode_r=2, circle=None, inpaint="h"):
     """Return a copy of `orig` with its label replaced by `text`."""
     px = clone(orig)
-    mask = erase_mask(px, kind, roi, erode_r)
+    mask = erase_mask(px, kind, roi, erode_r, circle)
     bbox = mask_bbox(mask)
     col = color or sample_color(px, mask)
-    inpaint_h(px, mask)
+    if inpaint == "hv":
+        inpaint_hv(px, mask)
+    else:
+        inpaint_h(px, mask)
     if box is None:
         if bbox is None:
             h, w = len(px), len(px[0])

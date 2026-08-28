@@ -84,7 +84,10 @@ def stroke(px, sdf, width, color, opacity=1.0, set_alpha=False):
 
 # ---------------------------------------------------------------- families
 def face_button(shape, state="normal"):
-    """64x64 round button. state: normal | lit | dark"""
+    """64x64 round button. state: normal | pressed.
+
+    Pressed = the same neutral dark button, only darker with a top inner
+    shadow; the glyph keeps its Sony colour, just dimmed."""
     col = {"cross": CROSS, "circle": CIRCLE, "square": SQUARE,
            "triangle": TRIANGLE}[shape]
     px = blank(64, 64)
@@ -92,25 +95,33 @@ def face_button(shape, state="normal"):
     paint(px, sd_circle(32, 32, 30.0), (13, 13, 13), 1.0, True)
     paint(px, sd_ring(32, 32, 29.0, 2.6), (30, 30, 30), 1.0, True)
     # face sphere
-    if state == "lit":
-        top, bot = mix(mul(col, 0.55), (40, 40, 40), 0.25), mul(col, 0.28)
-    elif state == "dark":
-        top, bot = (30, 31, 34), (12, 12, 14)
+    if state == "pressed":
+        top, bot = (27, 27, 30), (10, 10, 12)
     else:
         top, bot = (52, 53, 58), (18, 18, 21)
-    vgrad(px, sd_circle(32, 32, 26.8), top, bot, 7, 58)
-    # glossy top highlight (ellipse-ish band)
-    gloss = sd_circle(32, 14, 26.0)
     face = sd_circle(32, 32, 26.8)
-    hi = lambda x, y: max(gloss(x, y), face(x, y))
-    paint(px, hi, mix(top, (255, 255, 255), 0.28), 0.35)
+    vgrad(px, face, top, bot, 7, 58)
+    if state == "pressed":
+        # pressed-in look: soft shadow hanging from the top rim
+        for y in range(7, 24):
+            k = 1.0 - 0.42 * (24 - y) / 17.0
+            for x in range(64):
+                if face(x + 0.5, y + 0.5) < 0:
+                    r, g, b, a = px[y][x]
+                    px[y][x] = (round(r * k), round(g * k),
+                                round(b * k), a)
+    else:
+        # glossy top highlight (ellipse-ish band)
+        gloss = sd_circle(32, 14, 26.0)
+        hi = lambda x, y: max(gloss(x, y), face(x, y))
+        paint(px, hi, mix(top, (255, 255, 255), 0.28), 0.35)
     # glyph shadow + stroke (dead centre of the sphere)
     g = glyph_sdf(shape, 32, 32, 15.5)
-    gs = {"normal": col, "lit": (250, 250, 250),
-          "dark": mix(col, (140, 140, 140), 0.55)}[state]
-    stroke(px, lambda x, y: g(x, y - 1.0), 4.6, (0, 0, 0), 0.5)
+    gs = mul(col, 0.74) if state == "pressed" else col
+    stroke(px, lambda x, y: g(x, y - 1.0), 4.6, (0, 0, 0),
+           0.35 if state == "pressed" else 0.5)
     stroke(px, g, 4.4, gs)
-    if state != "dark":
+    if state == "normal":
         stroke(px, g, 2.0, mix(gs, (255, 255, 255), 0.35))
     return 64, 64, px
 
@@ -309,22 +320,25 @@ def build_all(orig=None):
     import retex
     icons = {}
 
-    def reuse(sid, text, kind, box=None, roi=BAND, grow=1.0, color=None):
+    def reuse(sid, text, kind, box=None, roi=BAND, grow=1.0, color=None,
+              circle=None, inpaint="h"):
         if orig and sid in orig:
             w, h, px = orig[sid]
             return retex.relabel(px, text, kind, box=box, roi=roi,
-                                 grow=grow, color=color)
+                                 grow=grow, color=color, circle=circle,
+                                 inpaint=inpaint)
         return None
 
     # face buttons: A->cross B->circle X->square Y->triangle
+    # (1091/1092/10B0/10B1 are the pressed states of the same buttons)
     icons[0x5D0] = face_button("cross")
-    icons[0x1091] = face_button("cross", "lit")
+    icons[0x1091] = face_button("cross", "pressed")
     icons[0x5D1] = face_button("circle")
-    icons[0x1092] = face_button("circle", "lit")
+    icons[0x1092] = face_button("circle", "pressed")
     icons[0x5E0] = face_button("square")
-    icons[0x10B0] = face_button("square", "dark")
+    icons[0x10B0] = face_button("square", "pressed")
     icons[0x5E1] = face_button("triangle")
-    icons[0x10B1] = face_button("triangle", "dark")
+    icons[0x10B1] = face_button("triangle", "pressed")
     # start/back -> OPTIONS/SHARE (reuse pill, swap arrow for text);
     # the ROI reaches the arrow's very top/bottom rows so no smudge stays
     ARROW_ROI = (13, 19, 51, 46)
@@ -389,15 +403,23 @@ def build_all(orig=None):
     # 10AE is the RT *dark circle* variant (white letters on black)
     icons[0x10AE] = reuse(0x10AE, "R2", "light", box=DCBOX,
                           color=DCGREY) or dark_circle("R2")
-    # stick clicks
-    icons[0x109B] = reuse(0x109B, "L3", "darker", roi=STICK_ROI) or \
-        stick3("L3")
-    icons[0x109C] = reuse(0x109C, "L3", "dark", roi=STICK_ROI) or \
-        stick3("L3", tan=True)
-    icons[0x10A6] = reuse(0x10A6, "R3", "darker", roi=STICK_ROI) or \
-        stick3("R3")
-    icons[0x10A7] = reuse(0x10A7, "R3", "dark", roi=STICK_ROI) or \
-        stick3("R3", tan=True)
+    # stick clicks — the LS/RS engraving (dark strokes + wide light
+    # bevels) fills the whole label zone, so wipe it entirely and refill
+    # with 2D diffusion, then write L3/R3
+    STICK_ROI2 = (20, 17, 46, 37)
+    STICK_BOX = (19, 21, 45, 35)
+    icons[0x109B] = reuse(0x109B, "L3", "box", roi=STICK_ROI2,
+                          box=STICK_BOX, color=(52, 52, 53),
+                          inpaint="hv") or stick3("L3")
+    icons[0x109C] = reuse(0x109C, "L3", "box", roi=STICK_ROI2,
+                          box=STICK_BOX, color=(66, 52, 30),
+                          inpaint="hv") or stick3("L3", tan=True)
+    icons[0x10A6] = reuse(0x10A6, "R3", "box", roi=STICK_ROI2,
+                          box=STICK_BOX, color=(52, 52, 53),
+                          inpaint="hv") or stick3("R3")
+    icons[0x10A7] = reuse(0x10A7, "R3", "box", roi=STICK_ROI2,
+                          box=STICK_BOX, color=(66, 52, 30),
+                          inpaint="hv") or stick3("R3", tan=True)
     # circled glyphs — geometry measured off the originals' ink bboxes
     icons[0x10BC] = circled_glyph("cross", 64, (178, 179, 178),
                                   (255, 255, 255), center=(31.5, 31.5),
