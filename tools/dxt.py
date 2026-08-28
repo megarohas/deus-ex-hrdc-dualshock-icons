@@ -107,3 +107,53 @@ def encode(px, w, h):
                 cols.append((p[0], p[1], p[2])); alps.append(p[3])
             out += _enc_alpha(alps) + _enc_color(cols)
     return bytes(out)
+
+def encode_dxt1(px, w, h):
+    """BC1 with 1-bit alpha (3-color mode for blocks with holes)."""
+    out = bytearray()
+    for by in range((h+3)//4):
+        for bx in range((w+3)//4):
+            cols, alps = [], []
+            for i in range(16):
+                x = min(bx*4 + (i & 3), w-1); y = min(by*4 + (i >> 2), h-1)
+                p = px[y][x]
+                cols.append((p[0], p[1], p[2])); alps.append(p[3])
+            has_holes = any(a < 128 for a in alps)
+            solid = [c for c, a in zip(cols, alps) if a >= 128]
+            if not solid:
+                out += struct.pack('<HHI', 0, 0xFFFF, 0xFFFFFFFF)
+                continue
+            mn = tuple(min(c[i] for c in solid) for i in range(3))
+            mx = tuple(max(c[i] for c in solid) for i in range(3))
+            q0, q1 = _to565(mx), _to565(mn)
+            if has_holes:
+                if q0 > q1: q0, q1 = q1, q0        # c0 <= c1: 3-color
+                d0, d1 = _c565(q0), _c565(q1)
+                tbl = [d0, d1,
+                       tuple((d0[i]+d1[i])//2 for i in range(3))]
+                bits = 0
+                for i in range(16):
+                    if alps[i] < 128:
+                        k = 3
+                    else:
+                        c = cols[i]
+                        k = min(range(3), key=lambda j: sum(
+                            (tbl[j][t]-c[t])**2 for t in range(3)))
+                    bits |= k << (2*i)
+            else:
+                if q0 == q1:
+                    if q0 == 0: q0 = 1
+                    else: q1 = q0 - 1
+                if q0 < q1: q0, q1 = q1, q0        # c0 > c1: 4-color
+                d0, d1 = _c565(q0), _c565(q1)
+                tbl = [d0, d1,
+                       tuple((2*d0[i]+d1[i])//3 for i in range(3)),
+                       tuple((d0[i]+2*d1[i])//3 for i in range(3))]
+                bits = 0
+                for i in range(16):
+                    c = cols[i]
+                    k = min(range(4), key=lambda j: sum(
+                        (tbl[j][t]-c[t])**2 for t in range(3)))
+                    bits |= k << (2*i)
+            out += struct.pack('<HHI', q0, q1, bits)
+    return bytes(out)
