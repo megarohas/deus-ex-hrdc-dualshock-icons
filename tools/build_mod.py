@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dxhr
 import dxt
 import icons
+import swf_template
 from dump_textures import decode_dxt1
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,8 +119,11 @@ def write_mod_archive(path, alignment, base_path, entries):
     return count, total
 
 
-# show the PS3 pad on the controller-layout screen: xenon <- ps3 pixels
-RAW_COPY = {0x24CD: 0x24CC}
+# movies whose platform switch gets retargeted WIN -> PS3 template
+# (controller-layout screen: PS3 callouts + PS3 pad render)
+SWF_PATCH_FILES = {r"pc-w\globaloutershell.drm",
+                   r"pc-w\globalscaleformdatabase.drm"}
+RAW_COPY = {}
 
 
 def main():
@@ -180,6 +184,21 @@ def main():
             blob[t.payload_off:t.payload_off + t.data_size] = enc
             n += 1
         total_swaps += n
+        if name in SWF_PATCH_FILES:
+            for s in sections:
+                if s.type != 7:
+                    continue
+                sec = bytes(blob[s.data_off:s.data_off + s.data_size])
+                try:
+                    patched = swf_template.patch_section(sec)
+                except Exception as ex:
+                    raise RuntimeError("swf patch failed in %s section "
+                                       "#%d: %s" % (name, s.index, ex))
+                if patched is not None:
+                    assert len(patched) == s.data_size
+                    blob[s.data_off:s.data_off + s.data_size] = patched
+                    print("    patched platform switch in section #%d "
+                          "id=%08X" % (s.index, s.id))
         out = dxhr.cdrm_wrap(bytes(blob), info) if wrapped else bytes(blob)
         entries.append((e.hash, e.locale, out))
         print("  %-64s %2d textures swapped, %d -> %d bytes" %
