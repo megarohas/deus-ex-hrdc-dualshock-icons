@@ -98,7 +98,8 @@ def _run(cmd):
 
 def text_ink(text, font="font_bold.ttf", big=600):
     """Render text huge on transparent canvas; return (pixels,w,h) cropped to ink."""
-    cw = ch = big * 2
+    cw = max(big * 2, round(big * (0.8 * len(text) + 0.6)))
+    ch = big * 2
     vf = (f"drawtext=fontfile={font}:text='{text}':fontsize={big}:"
           f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2")
     raw = _run(["ffmpeg","-v","error","-f","lavfi","-i",
