@@ -24,7 +24,7 @@ import os
 import struct
 import zlib
 
-GAME_DIR = r"D:\Deus Ex HRDC"
+GAME_DIR = os.environ.get("DXHR_GAME_DIR", r"C:\Games\Deus Ex HRDC")
 BIGFILE = os.path.join(GAME_DIR, "BIGFILE.000")
 FILELIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "work",

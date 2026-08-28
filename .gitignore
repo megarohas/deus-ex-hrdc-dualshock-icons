@@ -3,3 +3,6 @@ __pycache__/
 
 dist/
 
+tools/font_bold.ttf
+tools/font_semi.ttf
+
