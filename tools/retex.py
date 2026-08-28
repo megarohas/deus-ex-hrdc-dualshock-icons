@@ -18,11 +18,11 @@ def _roi(w, h):
     return (int(w * 0.17), int(h * 0.22), int(w * 0.84), int(h * 0.80))
 
 
-def erase_mask(px, kind, roi=None):
+def erase_mask(px, kind, roi=None, erode_r=2):
     h, w = len(px), len(px[0])
     x0, y0, x1, y1 = roi or _roi(w, h)
     base = draw.alpha_mask(px, 200)
-    inner = draw.erode(base, 2)
+    inner = draw.erode(base, erode_r)
     mask = [[False] * w for _ in range(h)]
     for y in range(y0, y1):
         for x in range(x0, x1):
@@ -113,10 +113,67 @@ def inpaint_h(px, mask):
     return px
 
 
-def relabel(orig, text, kind, box=None, color=None, grow=1.0, roi=None):
+def stamp_ink(px, text, box, color):
+    """Rasterise `text` into box as real alpha ink (transparent canvas)."""
+    crop, sw, sh = draw.text_ink(text, "font_bold.ttf")
+    bw, bh = box[2] - box[0] + 1, box[3] - box[1] + 1
+    dh = bh
+    dw = max(1, round(sw * dh / sh))
+    if dw > bw:
+        dw = bw
+        dh = max(1, round(sh * dw / sw))
+    cov = draw.resample(crop, sw, sh, dw, dh)
+    ox = box[0] + (bw - dw) // 2
+    oy = box[1] + (bh - dh) // 2
+    for y in range(dh):
+        for x in range(dw):
+            c = cov[y][x] / 255.0
+            if c <= 0.02:
+                continue
+            X, Y = ox + x, oy + y
+            if not (0 <= X < len(px[0]) and 0 <= Y < len(px)):
+                continue
+            r, g, b, a = px[Y][X]
+            na = round(255 * c)
+            if na >= a:
+                px[Y][X] = (color[0], color[1], color[2], max(a, na))
+
+
+def swap_ink(orig, text, interior, color=None, box=None):
+    """For alpha-ink textures (labels/badges): keep everything outside
+    `interior`, wipe the ink inside it, stamp `text` into the old bbox."""
+    px = clone(orig)
+    x0, y0, x1, y1 = interior
+    xs, ys, rs, gs, bs = [], [], [], [], []
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            r, g, b, a = px[y][x]
+            if a > 40:
+                xs.append(x)
+                ys.append(y)
+                if a > 160:
+                    rs.append(r)
+                    gs.append(g)
+                    bs.append(b)
+                px[y][x] = (0, 0, 0, 0)
+    if box is None:
+        box = (min(xs), min(ys), max(xs), max(ys)) if xs else interior
+    if color is None:
+        if rs:
+            rs.sort(), gs.sort(), bs.sort()
+            m = len(rs) // 2
+            color = (rs[m], gs[m], bs[m])
+        else:
+            color = (240, 240, 240)
+    stamp_ink(px, text, box, color)
+    return len(px[0]), len(px), px
+
+
+def relabel(orig, text, kind, box=None, color=None, grow=1.0, roi=None,
+            erode_r=2):
     """Return a copy of `orig` with its label replaced by `text`."""
     px = clone(orig)
-    mask = erase_mask(px, kind, roi)
+    mask = erase_mask(px, kind, roi, erode_r)
     bbox = mask_bbox(mask)
     col = color or sample_color(px, mask)
     inpaint_h(px, mask)

@@ -69,10 +69,9 @@ def glyph_sdf(shape, cx, cy, r):
         rr = sd_rrect(cx, cy, a, a, 1.5)
         return lambda x, y: abs(rr(x, y))
     if shape == "triangle":
-        a = r * 0.92
-        h_up = a * 0.90
-        pts = [(cx, cy - h_up), (cx + a * 0.95, cy + a * 0.62),
-               (cx - a * 0.95, cy + a * 0.62)]
+        hw = r * 0.80
+        hh = r * 0.69
+        pts = [(cx, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)]
         pg = sd_poly(pts)
         return lambda x, y: abs(pg(x, y))
     raise ValueError(shape)
@@ -105,27 +104,32 @@ def face_button(shape, state="normal"):
     face = sd_circle(32, 32, 26.8)
     hi = lambda x, y: max(gloss(x, y), face(x, y))
     paint(px, hi, mix(top, (255, 255, 255), 0.28), 0.35)
-    # glyph shadow + stroke
-    g = glyph_sdf(shape, 32, 33, 15.5)
+    # glyph shadow + stroke (dead centre of the sphere)
+    g = glyph_sdf(shape, 32, 32, 15.5)
     gs = {"normal": col, "lit": (250, 250, 250),
           "dark": mix(col, (140, 140, 140), 0.55)}[state]
-    stroke(px, lambda x, y: g(x, y - 1.4), 4.6, (0, 0, 0), 0.55)
+    stroke(px, lambda x, y: g(x, y - 1.0), 4.6, (0, 0, 0), 0.5)
     stroke(px, g, 4.4, gs)
     if state != "dark":
         stroke(px, g, 2.0, mix(gs, (255, 255, 255), 0.35))
     return 64, 64, px
 
 
-def circled_glyph(shape, size, ring_col, glyph_col, dark_bg=False):
+def circled_glyph(shape, size, ring_col, glyph_col, center=None,
+                  ring_r=None, ring_w=None, fill=None, glyph_r=None,
+                  stroke_w=None):
+    """Ring + PS glyph, geometry matched to the original it replaces."""
     px = blank(size, size)
-    c = size / 2.0
-    r = c - size * 0.08
-    if dark_bg:
-        paint(px, sd_circle(c, c, r), (16, 16, 16), 1.0, True)
-    paint(px, sd_ring(c, c, r - size * 0.02, max(2.0, size * 0.055)),
-          ring_col, 1.0, True)
-    g = glyph_sdf(shape, c, c + size * 0.01, r * 0.52)
-    stroke(px, g, max(2.2, size * 0.075), glyph_col, 1.0, True)
+    cx, cy = center or (size / 2.0 - 0.5, size / 2.0 - 0.5)
+    rr = ring_r if ring_r is not None else (size / 2.0 - size * 0.10)
+    rw = ring_w if ring_w is not None else max(2.0, size * 0.055)
+    if fill:
+        paint(px, sd_circle(cx, cy, rr + rw / 2.0 - 0.4), fill, 1.0, True)
+    paint(px, sd_ring(cx, cy, rr, rw), ring_col, 1.0, True)
+    g = glyph_sdf(shape, cx, cy, glyph_r if glyph_r is not None
+                  else rr * 0.70)
+    stroke(px, g, stroke_w or max(2.2, size * 0.075), glyph_col, 1.0,
+           True)
     return size, size, px
 
 
@@ -211,36 +215,37 @@ def stick3(text, tan=False):
 
 
 # ---------------------------------------------------------------- dpad
-def _wedge(cx, cy, hw, hh, r):
-    return sd_rrect(cx, cy, hw, hh, r)
-
-
 def dpad(white=(), orange=()):
-    """DS4-style split dpad. white/orange: subset of n,s,w,e."""
+    """DS4-style split dpad: four wedge keys tapering to the centre,
+    clearly separated (no overlap). white/orange: subset of n,s,w,e."""
     px = blank(64, 64)
     keys = {
-        "n": (32, 17, 9.5, 13.5),
-        "s": (32, 47, 9.5, 13.5),
-        "w": (17, 32, 13.5, 9.5),
-        "e": (47, 32, 13.5, 9.5),
+        "n": [(23.5, 4), (40.5, 4), (40.5, 20), (32, 26.5), (23.5, 20)],
+        "s": [(23.5, 60), (40.5, 60), (40.5, 44), (32, 37.5),
+              (23.5, 44)],
+        "w": [(4, 23.5), (20, 23.5), (26.5, 32), (20, 40.5), (4, 40.5)],
+        "e": [(60, 23.5), (44, 23.5), (37.5, 32), (44, 40.5),
+              (60, 40.5)],
     }
     arrows = {
-        "n": [(32, 9), (27.4, 16.4), (36.6, 16.4)],
-        "s": [(32, 55), (27.4, 47.6), (36.6, 47.6)],
-        "w": [(9, 32), (16.4, 27.4), (16.4, 36.6)],
-        "e": [(55, 32), (47.6, 27.4), (47.6, 36.6)],
+        "n": [(32, 9.5), (27.8, 16), (36.2, 16)],
+        "s": [(32, 54.5), (27.8, 48), (36.2, 48)],
+        "w": [(9.5, 32), (16, 27.8), (16, 36.2)],
+        "e": [(54.5, 32), (48, 27.8), (48, 36.2)],
     }
-    for k, (cx, cy, hw, hh) in keys.items():
-        body = _wedge(cx, cy, hw, hh, 5.0)
-        paint(px, body, (14, 14, 14), 1.0, True)
-        inner = _wedge(cx, cy, hw - 1.4, hh - 1.4, 4.0)
-        vgrad(px, inner, (66, 66, 68), (34, 34, 36), cy - hh, cy + hh)
+    for k, pts in keys.items():
+        body = sd_poly(pts)
+        ys = [p[1] for p in pts]
+        paint(px, lambda x, y, b=body: b(x, y) - 1.6, (12, 12, 12), 1.0,
+              True)
+        vgrad(px, lambda x, y, b=body: b(x, y) - 0.3, (64, 64, 66),
+              (33, 33, 35), min(ys), max(ys))
         if k in orange:
             ac = ORANGE
         elif k in white:
             ac = (242, 242, 242)
         else:
-            ac = (110, 110, 112)
+            ac = (108, 108, 110)
         paint(px, sd_poly(arrows[k]), ac, 1.0)
     return 64, 64, px
 
@@ -320,8 +325,9 @@ def build_all(orig=None):
     icons[0x10B0] = face_button("square", "dark")
     icons[0x5E1] = face_button("triangle")
     icons[0x10B1] = face_button("triangle", "dark")
-    # start/back -> OPTIONS/SHARE (reuse pill, swap arrow for text)
-    ARROW_ROI = (13, 22, 51, 43)
+    # start/back -> OPTIONS/SHARE (reuse pill, swap arrow for text);
+    # the ROI reaches the arrow's very top/bottom rows so no smudge stays
+    ARROW_ROI = (13, 19, 51, 46)
 
     def pill(sid, text, hi):
         if orig and sid in orig:
@@ -347,33 +353,42 @@ def build_all(orig=None):
     icons[0x1095] = dpad(orange=("w",))
     icons[0x1096] = dpad(orange=("e",))
     icons[0x1097] = dpad(orange=("n",))
-    # bumpers
-    icons[0x1098] = reuse(0x1098, "L1", "dark") or bumper("L1")
-    icons[0x1099] = reuse(0x1099, "L1", "orange") or bumper("L1", hi=True)
-    icons[0x109A] = reuse(0x109A, "L1", "light") or dark_circle("L1")
-    icons[0x5DC] = reuse(0x5DC, "R1", "dark") or bumper("R1", boxy=True)
-    icons[0x10A4] = reuse(0x10A4, "R1", "orange") or bumper("R1")
+    # bumpers — label boxes sized to the original letters (~15px tall);
+    # all four dark circles share one box and the original grey
+    BBOX = (20, 25, 44, 39)
+    DCBOX = (17, 22, 47, 41)
+    DCGREY = (189, 190, 189)
+    icons[0x1098] = reuse(0x1098, "L1", "dark", box=BBOX) or bumper("L1")
+    icons[0x1099] = reuse(0x1099, "L1", "orange", box=BBOX) or \
+        bumper("L1", hi=True)
+    icons[0x109A] = reuse(0x109A, "L1", "light", box=DCBOX,
+                          color=DCGREY) or dark_circle("L1")
+    icons[0x5DC] = reuse(0x5DC, "R1", "dark", box=BBOX) or \
+        bumper("R1", boxy=True)
+    icons[0x10A4] = reuse(0x10A4, "R1", "orange", box=BBOX) or \
+        bumper("R1")
     # 10A5 is the RB *dark circle* variant (white letters on black)
-    icons[0x10A5] = reuse(0x10A5, "R1", "light", color=(226, 227, 226)) \
-        or dark_circle("R1")
+    icons[0x10A5] = reuse(0x10A5, "R1", "light", box=DCBOX,
+                          color=DCGREY) or dark_circle("R1")
     # triggers (fixed label boxes: LT letters sit right of the curl,
     # RT letters mirrored)
-    TBOX_L = (26, 22, 50, 40)
-    TBOX_R = (14, 22, 38, 40)
+    TBOX_L = (28, 25, 48, 39)
+    TBOX_R = (16, 25, 38, 39)
     icons[0x5DB] = reuse(0x5DB, "L2", "dark", box=TBOX_L) or \
         trigger("L2", "l")
     icons[0x10A2] = reuse(0x10A2, "L2", "orange", box=TBOX_L,
                           color=(244, 168, 52)) or \
         trigger("L2", "l", text_col=ORANGE_TXT)
-    icons[0x10A3] = reuse(0x10A3, "L2", "light") or dark_circle("L2")
+    icons[0x10A3] = reuse(0x10A3, "L2", "light", box=DCBOX,
+                          color=DCGREY) or dark_circle("L2")
     icons[0x5DE] = reuse(0x5DE, "R2", "dark", box=TBOX_R) or \
         trigger("R2", "r")
     icons[0x10AD] = reuse(0x10AD, "R2", "orange", box=TBOX_R,
                           color=(244, 168, 52)) or \
         trigger("R2", "r", text_col=ORANGE_TXT)
     # 10AE is the RT *dark circle* variant (white letters on black)
-    icons[0x10AE] = reuse(0x10AE, "R2", "light", color=(226, 227, 226)) \
-        or dark_circle("R2")
+    icons[0x10AE] = reuse(0x10AE, "R2", "light", box=DCBOX,
+                          color=DCGREY) or dark_circle("R2")
     # stick clicks
     icons[0x109B] = reuse(0x109B, "L3", "darker", roi=STICK_ROI) or \
         stick3("L3")
@@ -383,21 +398,49 @@ def build_all(orig=None):
         stick3("R3")
     icons[0x10A7] = reuse(0x10A7, "R3", "dark", roi=STICK_ROI) or \
         stick3("R3", tan=True)
-    # circled glyphs
+    # circled glyphs — geometry measured off the originals' ink bboxes
     icons[0x10BC] = circled_glyph("cross", 64, (178, 179, 178),
-                                  (255, 255, 255))
+                                  (255, 255, 255), center=(31.5, 31.5),
+                                  ring_r=22.3, ring_w=3.0, glyph_r=16.0,
+                                  stroke_w=3.8)
     icons[0x10B9] = circled_glyph("cross", 32, (205, 205, 205),
-                                  (255, 255, 255))
+                                  (255, 255, 255), center=(15.5, 15.5),
+                                  ring_r=13.6, ring_w=2.2, glyph_r=9.6,
+                                  stroke_w=2.6)
     icons[0x10BE] = circled_glyph("square", 32, (205, 205, 205),
-                                  (255, 255, 255))
-    icons[0x26B9] = circled_glyph("cross", 32, (16, 16, 16), (16, 16, 16))
-    icons[0x26BA] = circled_glyph("circle", 32, (16, 16, 16), (16, 16, 16))
-    # text labels / badges
-    icons[0x25C6] = text_label_alpha("L2", 32, 32)
-    icons[0x25C7] = text_label_alpha("R2", 32, 32)
-    icons[0x25CE] = badge("L2", 32, 16)
-    icons[0x25CF] = badge("R2", 32, 16)
-    icons[0x25D7] = badge("L2", 64, 32)
+                                  (255, 255, 255), center=(15.5, 15.5),
+                                  ring_r=13.6, ring_w=2.2, glyph_r=9.8,
+                                  stroke_w=2.6)
+    # mini black-on-white pips (subtitle icons): white disc + dark glyph
+    icons[0x26B9] = circled_glyph("cross", 32, (18, 18, 18), (18, 18, 18),
+                                  center=(15.5, 16.5), ring_r=10.3,
+                                  ring_w=1.9, fill=(248, 248, 248),
+                                  glyph_r=6.4, stroke_w=2.0)
+    icons[0x26BA] = circled_glyph("circle", 32, (18, 18, 18),
+                                  (18, 18, 18), center=(15.5, 16.5),
+                                  ring_r=10.3, ring_w=1.9,
+                                  fill=(248, 248, 248), glyph_r=6.6,
+                                  stroke_w=2.0)
+
+    # text labels / badges — sized to the original ink (12px caps)
+    def ink_label(text, w, h, box, color=(240, 240, 240)):
+        px = blank(w, h)
+        retex.stamp_ink(px, text, box, color)
+        return w, h, px
+
+    icons[0x25C6] = ink_label("L2", 32, 32, (8, 10, 24, 21))
+    icons[0x25C7] = ink_label("R2", 32, 32, (8, 10, 24, 21))
+    if orig and 0x25CE in orig:
+        icons[0x25CE] = retex.swap_ink(orig[0x25CE][2], "L2", (9, 5, 24, 11))
+        icons[0x25CF] = retex.swap_ink(orig[0x25CF][2], "R2", (9, 5, 24, 11))
+    else:
+        icons[0x25CE] = badge("L2", 32, 16)
+        icons[0x25CF] = badge("R2", 32, 16)
+    if orig and 0x25D7 in orig:
+        icons[0x25D7] = retex.swap_ink(orig[0x25D7][2], "L2",
+                                       (5, 5, 33, 20))
+    else:
+        icons[0x25D7] = badge("L2", 64, 32)
     return icons
 
 
