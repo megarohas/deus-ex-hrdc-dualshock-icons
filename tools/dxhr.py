@@ -173,7 +173,16 @@ def cdrm_wrap(payload, info):
         pos += _align16(u)
     if _align16(pos) < _align16(len(payload)):
         raise ValueError("payload larger than original block layout")
-    blobs = [zlib.compress(c, 9) for c in chunks]
+    # compress each block; store it raw (type 1) when zlib does not help,
+    # exactly like the original packer — the engine chokes on blocks whose
+    # compressed size exceeds their uncompressed size
+    blobs = []
+    for c in chunks:
+        z = zlib.compress(c, 9)
+        if len(z) >= len(c):
+            blobs.append((1, c))
+        else:
+            blobs.append((2, z))
     count = len(blobs)
     if version == 0:
         head = struct.pack("<4sIII", b"CDRM", 0, count, 0)
@@ -184,10 +193,10 @@ def cdrm_wrap(payload, info):
         padding = _align16(table_end) - table_end
         head = struct.pack("<4sIII", b"CDRM", 2, count, padding)
     out = bytearray(head)
-    for u, b in zip(usizes, blobs):
-        out += struct.pack("<II", (u << 8) | 2, len(b))
+    for u, (btype, b) in zip(usizes, blobs):
+        out += struct.pack("<II", (u << 8) | btype, len(b))
     out += b"\0" * padding
-    for b in blobs:
+    for btype, b in blobs:
         out += b
         out += b"\0" * (_align16(len(b)) - len(b))
     return bytes(out)
