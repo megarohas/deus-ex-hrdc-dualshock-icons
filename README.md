@@ -88,6 +88,13 @@ the layout screen. `tools/icons.py` draws the replacement art: procedural
 faces/d-pad, and label surgery that keeps the game's own authored pixels
 for the silver hardware buttons.
 
+## License
+
+Code and tools in this repository are [MIT](LICENSE)-licensed. The replacement
+textures partly reuse the game's own artwork; Deus Ex: Human Revolution and its
+assets belong to Square Enix / Eidos-Montréal and are not covered by this
+license.
+
 ---
 
 ## Установка (RU)
